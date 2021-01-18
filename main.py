@@ -6,6 +6,20 @@ from Parameters import Parameters
 import tensorflow as tf
 from utils import load_settings_yaml
 
+# Allow growth
+def allow_growth():
+    # function that allows growth of memeory on GPU - No prior allocation
+    physical_devices = tf.config.list_physical_devices('GPU')
+    try:
+      tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    except:
+      # Invalid device or cannot modify virtual devices once initialized.
+      pass
+
+# Allow Growth 
+  # Mod: BHNA 18 Jan 2020
+allow_growth()
+
 tf.compat.v1.disable_eager_execution()
 
 # Define ArgumentParser
