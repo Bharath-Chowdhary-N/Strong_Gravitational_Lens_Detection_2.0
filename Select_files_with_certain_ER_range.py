@@ -23,6 +23,7 @@ import pandas as pd
 import random
 import tensorflow as tf
 import shutil
+import pathlib
 from tensorflow.keras import backend as K
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
@@ -67,13 +68,31 @@ df_er_processed=df[df['LENSER'].between(1.5, 4, inclusive=True)]
 df_er_processed_path_as_list=df_er_processed['path'].tolist()
 
 # 8.0 - Process and save files to destination
-destination_er=os.path.join("data","train_refined_er","sources")
+
+
+destination_er_train=os.path.join("data","train_refined_total","train")
+destination_er_validation=os.path.join("data","train_refined_total","validation")
+destination_er_test=os.path.join("data","train_refined_total","test")
 create_dir_if_not_exists(destination_er)
 folderPath=os.path.join("data","train","sources")
 files=df_er_processed_path_as_list
 for file in os.listdir(folderPath): 
-    for file in files:
-            shutil.copy(file, destination_er)
+    
+        print(len(os.listdir(destination_er)))
+        for file in files:
+            if len(os.listdir(destination_er))!=(df_er_processed.shape)[0]:    
+                parent_folder=pathlib.PurePath(file)
+                parent_folder_name=parent_folder.parent.name
+                rand_nr=random.randrange(10)
+                if rand_nr<8:
+                    destination_add=os.path.join(destination_er_train,parent_folder_name)
+                elif rand_nr==8:
+                    destination_add=os.path.join(destination_er_validation,parent_folder_name)
+                elif rand_nr==9:
+                    destination_add=os.path.join(destination_er_test,parent_folder_name)
+                #print(destination_add)                             
+                create_dir_if_not_exists(destination_add)
+                shutil.copy(file, destination_add)
             
 # 9.0 check:
 if len(os.listdir(destination_er))==(df_er_processed.shape)[0]:
