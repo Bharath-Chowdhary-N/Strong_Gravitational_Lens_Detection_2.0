@@ -5,7 +5,7 @@ import psutil
 import six
 import numpy as np
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Activation, Dense, Flatten, GaussianNoise, Conv2D, MaxPooling2D, AveragePooling2D, Add, ZeroPadding2D, BatchNormalization
+from tensorflow.keras.layers import Input, Activation, Dense, Flatten, GaussianNoise, Conv2D, MaxPooling2D, AveragePooling2D, Add, ZeroPadding2D, BatchNormalization, Dropout, AveragePooling2D, GlobalAveragePooling2D, Flatten
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.initializers import glorot_uniform
 from tensorflow.keras import optimizers, metrics
@@ -61,6 +61,18 @@ class Network:
             self.model          = self.build_resnet(self.input_shape, self.num_outputs, self.basic_block, [2, 2, 2, 2])
         elif self.params.net_name == "resnet50":
             self.model          = self.build_resnet50(input_shape = self.input_shape, num_outputs = self.num_outputs)
+        elif self.params.net_name == "densenet121":
+            self.densenet_array = np.array([6,12,24,16])
+            self.model          = self.build_densenet()
+        elif self.params.net_name == "densenet169":
+            self.densenet_array = np.array([6,12,32,32])
+            self.model          = self.build_densenet()
+        elif self.params.net_name == "densenet201":
+            self.densenet_array = np.array([6,12,48,32])
+            self.model          = self.build_densenet()
+        elif self.params.net_name == "densenet264":
+            self.densenet_array = np.array([6,12,64,48])
+            self.model          = self.build_densenet()
         elif self.params.net_name == "simple_test_net":
             self.model          = self.build_simple_test_net(input_shape = self.input_shape, num_outputs = self.num_outputs)
 
@@ -140,6 +152,7 @@ class Network:
 
                 # Load train chunk and targets
                 X_train_chunk, y_train_chunk = self.dg.load_chunk(self.params.chunksize, self.dg.Xlenses_train, self.dg.Xnegatives_train, self.dg.Xsources_train, self.params.data_type, self.params.mock_lens_alpha_scaling)
+
                 # Load validation chunk and targets
                 X_validation_chunk, y_validation_chunk = self.dg.load_chunk_val(data_type=np.float32, mock_lens_alpha_scaling=self.params.mock_lens_alpha_scaling)
 
@@ -432,11 +445,117 @@ class Network:
             print(model.summary(), flush=True)
 
         return model
+    def dense_bottleneck_layer(self,X,block_name):
+        X = BatchNormalization(axis=3, name=block_name+'bn1')(X)
+        X = Activation('relu')(X)
+        X = Conv2D(4*self.densenet_nr_filters, (1, 1), name=block_name+'conv1')(X)
+        if self.densenet_dropout == True:
+           X = Dropout(self.densenet_dropout_rate)(X)
+        #print("##########################inside bottleneck layer")
+        #print(X)
+        #print("###########################")
+        X=BatchNormalization(axis=3, name=block_name+'bn2')(X)
+        X = Activation('relu')(X)
+        X = Conv2D(self.densenet_nr_filters, (3, 3), padding='same', name=block_name + 'conv2')(X)
+        if self.densenet_dropout == True:
+           X = Dropout(self.densenet_dropout_rate)(X)
+
+        return X
+
+    def dense_transition_layer(self,X, block_name):
+        X = BatchNormalization(axis=3, name=block_name + 'bn1')(X)
+        X = Activation('relu')(X)
+
+        X=Conv2D(np.int(0.5*X.shape[-1]),(1,1),name=block_name+'conv1')(X)
+        if self.densenet_dropout==True:
+           X=Dropout(self.densenet_dropout_rate)(X)
+        X=AveragePooling2D(pool_size=(2, 2), strides=2)(X)
+
+        return X
+
+    def dense_block(self,X,n_layers,layer_name):
+        layers=list()
+        layers.append(X)
+        #print("####################")
+        #print(layers)
+        #print("####################")
+        X = self.dense_bottleneck_layer(X,block_name=layer_name+"bn_layer"+np.str(0))
+        layers.append(X)
+        #print("--------------------------------------------\n")
+        #print(layers)
+        #print("----------------------------------------------")
+        for i in range(0,n_layers-1):
+            X=tf.concat(layers, axis=3)
+            X=self.dense_bottleneck_layer(X,block_name=layer_name+"bn_layer"+np.str(i+1))
+            layers.append(X)
+
+        X=tf.concat(layers,axis=3)
+        return X
+
+    #Builds as densenet
+    def build_densenet(self, input_shape=(101, 101, 1), num_outputs=1):
+
+        self.densenet_nr_filters=12
+        self.densenet_dropout_rate=0.2
+        self.densenet_num_outputs=num_outputs
+        self.densenet_dropout=False
+        # Densenet in this code comprises of
+        # 1. dense_bottleneck layer
+
+        # Define the input as a Tensor with shape input_shape
+        X_input=Input(input_shape)
+        #print("##########################before")
+        #print(X_input)
+        #print("##########################")
+        X=X_input
+        #print("##########################after")
+        #X = ZeroPadding2D((3, 3))(X_input)
+        #print(X)
+        #print("##########################")
+
+        X = tf.keras.layers.ZeroPadding2D(padding=((8, 8), (8, 8)))(X)
+        X = Conv2D(64, (7, 7), strides=(2, 2), name='conv0', kernel_initializer=glorot_uniform(seed=0))(X)
+
+        X = BatchNormalization(axis=3, epsilon=1.001e-5, name='conv1/bn')(X)
+        X = Activation('relu', name='conv1/relu')(X)
+
+
+        #print("##########################after first Conv")
+        #print(X)
+        #print("##########################")
+
+
+        X=self.dense_block(X,n_layers=self.densenet_array[0],layer_name="Dense_1")
+        X=self.dense_transition_layer(X,block_name="transition_1")
+
+        X = self.dense_block(X, n_layers=self.densenet_array[1], layer_name="Dense_2")
+        X = self.dense_transition_layer(X, block_name="transition_2")
+
+        X = self.dense_block(X, n_layers=self.densenet_array[2], layer_name="Dense_3")
+        X = self.dense_transition_layer(X, block_name="transition_3")
+
+        X = self.dense_block(X, n_layers=self.densenet_array[3], layer_name="Dense_4")
+
+        X=BatchNormalization(axis=3, name='bn_final')(X)
+        X=Activation('relu')(X)
+        X=GlobalAveragePooling2D()(X)
+        X=Flatten()(X)
+        #X=tf.layers.dense(inputs=X, name='linear')
+        X = Dense(self.densenet_num_outputs, activation='sigmoid', name='fc_' + str(num_outputs),kernel_initializer=glorot_uniform(seed=0))(X)
+
+        # Create model
+        model = Model(inputs=X_input, outputs=X, name='densenet')
+
+        # Compile the Model before returning it.
+        model.compile(optimizer=self.optimizer, loss=self.loss_function, metrics=self.metrics)
+        if self.verbatim:
+            print(model.summary(), flush=True)
+        return model
 
 
     # Builds a Residual Neural Network with network depth 50
     def build_resnet50(self, input_shape = (101, 101, 1), num_outputs = 1):
-    
+        #input_shape=(112,112,1)
         # Define the input as a Tensor with shape input_shape
         X_input = Input(input_shape)
         
